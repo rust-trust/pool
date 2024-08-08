@@ -213,16 +213,6 @@ impl<const TOKEN_COUNT: usize> Invariant<TOKEN_COUNT> {
         );
             binary_op_balances(AmountT::sub, &updated_balances, &input_fee_amounts)
         } else {
-            updated_balances
-        });
-
-        // println!("SWAP  swap_base_balances: {:?}", swap_base_balances);
-        let known_balances = exclude_index(index, swap_base_balances);
-        let final_amount = if !is_exact_input && !total_fee.is_zero() {
-            fast_round(Decimal::from(intermediate_amount) / (Decimal::one() - total_fee))
-        } else {
-            intermediate_amount
-        };
     }
 
     fn add_remove(

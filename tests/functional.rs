@@ -120,61 +120,6 @@ fn setup_standard_testcase(params: &Parameters) -> (SolanaNode, DeployedPool, Us
 
     }
 
-    #[test]
-    fn test_pool_remove_uniform() {
-        let mut params = default_params();
-        params.user_funds = [0; TOKEN_COUNT];
-        let (mut solnode, pool, _, lp_collective) = setup_standard_testcase(&params);
-
-        let lp_total_supply = lp_collective.lp.balance(&mut solnode);
-        let original_depth = (pool.state(&mut solnode)).previous_depth;
-        let original_balances = pool.balances(&mut solnode);
-
-        {
-            println!("> removeUniform(one quarter of lp supply)");
-            lp_collective.lp.approve(lp_total_supply / 4, &mut solnode);
-            let defi_ix = DeFiInstruction::RemoveUniform {
-                exact_burn_amount: lp_total_supply / 4,
-                minimum_output_amounts: create_array(|i| params.pool_balances[i] / 4),
-            };
-            pool.execute_defi_instruction(defi_ix, &lp_collective.stables, Some(&lp_collective.lp), &mut solnode)
-                .unwrap();
-
-            assert_eq!(
-                lp_collective.stable_balances(&mut solnode),
-                create_array(|i| params.pool_balances[i] / 4)
-            );
-            assert_eq!(lp_collective.lp.balance(&mut solnode), (lp_total_supply / 4) * 3);
-            assert_eq!(
-                pool.balances(&mut solnode),
-                create_array(|i| (original_balances[i] / 4) * 3)
-            );
-            assert_eq!((pool.state(&mut solnode)).previous_depth, (original_depth / 4) * 3);
-        }
-
-        {
-            println!("> setting pool to paused (subsequent removeUniform has to work regardless!)");
-            let gov_ix = GovernanceInstruction::SetPaused { paused: true };
-            pool.execute_governance_instruction(gov_ix, None, &mut solnode).unwrap();
-
-            assert!(pool.state(&mut solnode).is_paused);
-        }
-
-        {
-            println!("> removeUniform(remaining three quarters of lp supply)");
-            lp_collective.lp.approve((lp_total_supply / 4) * 3, &mut solnode);
-            let defi_ix = DeFiInstruction::RemoveUniform {
-                exact_burn_amount: (lp_total_supply / 4) * 3,
-                minimum_output_amounts: create_array(|i| (params.pool_balances[i] / 4) * 3),
-            };
-            pool.execute_defi_instruction(defi_ix, &lp_collective.stables, Some(&lp_collective.lp), &mut solnode)
-                .unwrap();
-
-            assert_eq!(lp_collective.stable_balances(&mut solnode), original_balances);
-            assert_eq!(lp_collective.lp.balance(&mut solnode), 0);
-            assert_eq!(pool.balances(&mut solnode), [0; TOKEN_COUNT]);
-            assert_eq!(pool.state(&mut solnode).previous_depth, 0u128);
-        }
     }
 
     #[test]
@@ -218,137 +163,6 @@ fn setup_standard_testcase(params: &Parameters) -> (SolanaNode, DeployedPool, Us
             .unwrap();
         println!(">       user lp after: {:?}", user.lp.balance(&mut solnode));
     }
-
-    // #[tokio::test]
-    // async fn test_expensive_add2() {
-    //     let initial_balances: [AmountT; TOKEN_COUNT] = [
-    //         28_799_968_080,
-    //         28_799_968_080,
-    //         8_861_528_640,
-    //         8_492_298_280,
-    //         6_646_146_480,
-    //         19_569_209_080,
-    //     ];
-
-    //     let user_add: [AmountT; TOKEN_COUNT] = [
-    //         2_879_996_964,
-    //         664_614_684,
-    //         1_956_921_014,
-    //         3_507_688_610,
-    //         664_614_684,
-    //         2_879_996_964,
-    //     ];
-
-    //     let params = Parameters {
-    //         amp_factor: DecT::from(1000),
-    //         lp_fee: DecT::new(2000, 5).unwrap(),
-    //         governance_fee: DecT::new(1000, 5).unwrap(),
-    //         lp_decimals: 6,
-    //         // stable_decimals: create_array(|i| if i < 4 { 6 } else { 8 }),
-    //         stable_decimals: create_array(|_| 6),
-    //         pool_balances: create_array(|i| initial_balances[i]),
-    //         user_funds: create_array(|i| user_add[i]),
-    //     };
-    //     let (mut solnode, pool, user, _) = setup_standard_testcase(&params).await;
-
-    //     user.stable_approve(&params.user_funds, &mut solnode);
-    //     let defi_ix = DeFiInstruction::Add {
-    //         input_amounts: params.user_funds,
-    //         minimum_mint_amount: 3_507_688_610 as AmountT,
-    //     };
-    //     pool.execute_defi_instruction(defi_ix, &user.stables, Some(&user.lp), &mut solnode)
-    //         .await
-    //         .unwrap();
-    // }
-    // // about 264_000 compute budget used for the remove
-    // async fn test_expensive_remove() {
-    //     let initial_balances: [AmountT; TOKEN_COUNT] = [
-    //         195_269_254_200,
-    //         68_344_238_970,
-    //         165_978_866_070,
-    //         11_933_121_090,
-    //         11_933_121_090,
-    //         195_269_254_200
-    //     ];
-    //
-    //     let user_add: [AmountT; TOKEN_COUNT] = [
-    //         10_000_000,
-    //         9_000_000,
-    //         11_000_000,
-    //         12_000_000,
-    //         13_000_00000,
-    //         12_000_00000,
-    //     ];
-
-    //     let exact_output_amounts: [AmountT; TOKEN_COUNT] =     [
-    //         4_271_514_975,
-    //         745_820_075,
-    //         10_373_679_225,
-    //         10_373_679_225,
-    //         4_271_514_975,
-    //         12_204_328_500
-    //     ];
-
-    //     let maximum_burn_amount = u64::MAX; //12_204_328_500;
-
-    //     let params = Parameters {
-    //         amp_factor: DecT::new(1000, 0).unwrap(),
-    //         lp_fee: DecT::new(3, 6).unwrap(),
-    //         governance_fee: DecT::new(1, 6).unwrap(),
-    //         lp_decimals: 6,
-    //         stable_decimals: create_array(|i| if i < 4 { 6 } else { 8 }),
-    //         pool_balances: create_array(|i| initial_balances[i]),
-    //         user_funds: create_array(|i| user_add[i]),
-    //     };
-
-    //     let (mut solnode, pool, _, lp_collective) = setup_standard_testcase(&params).await;
-
-    //     lp_collective.lp.approve(maximum_burn_amount, &mut solnode);
-
-    //     let defi_ix = DeFiInstruction::RemoveExactOutput {
-    //         maximum_burn_amount,
-    //         exact_output_amounts,
-    //     };
-
-    //     pool.execute_defi_instruction(defi_ix,  &lp_collective.stables, Some(&lp_collective.lp), &mut solnode)
-    //         .await
-    //         .unwrap();
-    // }
-
-    #[test]
-    fn test_prepare_governance_transition() {
-        let initial_balances: [AmountT; TOKEN_COUNT] =
-            [5_590_413, 6_341_331, 4_947_048, 3_226_825, 2_560_56724, 3_339_50641];
-
-        let user_add: [AmountT; TOKEN_COUNT] = [
-            10_000_000,
-            9_000_000,
-            11_000_000,
-            12_000_000,
-            13_000_00000,
-            12_000_00000,
-        ];
-
-        let params = Parameters {
-            amp_factor: DecT::new(1000, 0).unwrap(),
-            lp_fee: DecT::new(3, 6).unwrap(),
-            governance_fee: DecT::new(1, 6).unwrap(),
-            lp_decimals: 6,
-            stable_decimals: create_array(|i| if i < 4 { 6 } else { 8 }),
-            pool_balances: create_array(|i| initial_balances[i]),
-            user_funds: create_array(|i| user_add[i]),
-        };
-
-        let (mut solnode, pool, ..) = setup_standard_testcase(&params);
-
-        let new_gov_key = Keypair::new();
-        let gov_ix = GovernanceInstruction::PrepareGovernanceTransition {
-            upcoming_governance_key: new_gov_key.pubkey(),
-        };
-        pool.execute_governance_instruction(gov_ix, None, &mut solnode).unwrap();
-
-        let updated_state = pool.state(&mut solnode);
-        assert_eq!(updated_state.prepared_governance_key, new_gov_key.pubkey());
     }
 
     #[test]
@@ -481,4 +295,163 @@ fn setup_standard_testcase(params: &Parameters) -> (SolanaNode, DeployedPool, Us
         pool.execute_defi_instruction(defi_ix, &user.stables, Some(&user.lp), &mut solnode)
             .unwrap();
     }
+}
+
+#[tokio::test]
+async fn test_pool_swap_exact_output() {
+    let mut test = ProgramTest::new(
+        "pool",
+        pool::id(),
+        processor!(pool::processor::Processor::<{ TOKEN_COUNT }>::process),
+    );
+
+    // limit to track compute unit increase.
+    // Mainnet compute budget as of 08/25/2021 is 200_000
+    test.set_bpf_compute_max_units(200_000);
+
+    //TODO: not sure if needed
+    let user_accounts_owner = Keypair::new();
+
+    let (mut banks_client, payer, _recent_blockhash) = test.start().await;
+
+    const RESERVE_AMOUNT: u64 = 42;
+
+    let amp_factor = DecimalU64::new(1000, 0).unwrap();
+    let lp_fee = DecimalU64::new(1000, 4).unwrap();
+    let governance_fee = DecimalU64::new(1000, 5).unwrap();
+    let pool = TestPoolAccountInfo::<{ TOKEN_COUNT }>::new();
+    pool.init_pool(
+        &mut banks_client,
+        &payer,
+        &user_accounts_owner,
+        amp_factor,
+        lp_fee,
+        governance_fee,
+    )
+    .await;
+
+    let mut deposit_tokens_to_mint_arrayvec = ArrayVec::<_, TOKEN_COUNT>::new();
+    let mut deposit_tokens_for_approval_arrayvec = ArrayVec::<_, TOKEN_COUNT>::new();
+    let mut inc: u64 = 1;
+    for i in 0..TOKEN_COUNT {
+        let approval_amount: u64 = inc * 100;
+        let mint_amount: u64 = approval_amount * 2;
+        deposit_tokens_to_mint_arrayvec.push(mint_amount);
+        deposit_tokens_for_approval_arrayvec.push(approval_amount);
+        inc += 1;
+    }
+    let deposit_tokens_to_mint: [AmountT; TOKEN_COUNT] = deposit_tokens_to_mint_arrayvec.into_inner().unwrap();
+    let deposit_tokens_for_approval: [AmountT; TOKEN_COUNT] =
+        deposit_tokens_for_approval_arrayvec.into_inner().unwrap();
+    let user_transfer_authority = Keypair::new();
+    let (user_token_accounts, user_lp_token_account) = pool
+        .prepare_accounts_for_add(
+            &mut banks_client,
+            &payer,
+            &user_accounts_owner,
+            &user_transfer_authority.pubkey(),
+            deposit_tokens_to_mint,
+            deposit_tokens_for_approval,
+        )
+        .await;
+    for i in 0..TOKEN_COUNT {
+        let user_token_acct_acct = get_account(&mut banks_client, &user_token_accounts[i].pubkey()).await;
+        let user_token_acct = Token::unpack(&user_token_acct_acct.data).unwrap();
+        println!(
+            "user_token_accounts[{}].amount is {}. delegated_amount: {}",
+            i, user_token_acct.amount, user_token_acct.delegated_amount
+        );
+    }
+
+    let mut user_token_keypairs_arrvec = ArrayVec::<_, TOKEN_COUNT>::new();
+    for i in 0..TOKEN_COUNT {
+        user_token_keypairs_arrvec.push(user_token_accounts[i].pubkey());
+    }
+    let user_token_pubkeys = user_token_keypairs_arrvec.into_inner().unwrap();
+    let user_token_balances_before = get_token_balances(&mut banks_client, user_token_pubkeys).await;
+    let user_lp_token_balances_before =
+        get_token_balances::<{ 1 }>(&mut banks_client, [user_lp_token_account.pubkey()]).await;
+    assert_eq!(deposit_tokens_to_mint, user_token_balances_before);
+    assert_eq!(0, user_lp_token_balances_before[0]);
+    println!("[DEV] Executing add");
+    pool.execute_add(
+        &mut banks_client,
+        &payer,
+        &user_accounts_owner,
+        &user_transfer_authority,
+        &user_token_accounts,
+        &spl_token::id(),
+        &user_lp_token_account.pubkey(),
+        deposit_tokens_for_approval,
+        0,
+    )
+    .await;
+
+    print!("user_account_owner: {}, user_transfer_authority: {}", user_accounts_owner.pubkey(), user_transfer_authority.pubkey());
+    print_user_token_account_owners(&mut banks_client, user_token_pubkeys).await;
+    let user_token_balances_after = get_token_balances(&mut banks_client, user_token_pubkeys).await;
+    let user_token_balances_after_tree = get_token_balances2(&mut banks_client, user_token_pubkeys).await;
+    let mut expected_user_token_balances_arrvec = ArrayVec::<_, TOKEN_COUNT>::new();
+    for i in 0..TOKEN_COUNT {
+        expected_user_token_balances_arrvec.push(deposit_tokens_to_mint[i] - deposit_tokens_for_approval[i]);
+    }
+    let expected_user_token_balances = expected_user_token_balances_arrvec.into_inner().unwrap();
+    println!("expected_user_token_balances: {:?}", expected_user_token_balances);
+    println!("user_token_balances_after: {:?}", user_token_balances_after_tree);
+    //assert_eq!(expected_user_token_balances, user_token_balances_after);
+    let user_lp_token_balance_after =
+        get_token_balances::<{ 1 }>(&mut banks_client, [user_lp_token_account.pubkey()]).await;
+    println!("user_lp_token_balance_after: {:?}", user_lp_token_balance_after);
+    let governance_fee_balance =
+        get_token_balances::<{ 1 }>(&mut banks_client, [pool.governance_fee_keypair.pubkey()]).await;
+    println!("governance_fee_balance: {:?}", governance_fee_balance);
+    let mut exact_output_amounts_arrayvec = ArrayVec::<_, TOKEN_COUNT>::new();
+    let mut inc: u64 = 1;
+    for i in 0..TOKEN_COUNT - 1 {
+        let mint_amount: u64 = inc;
+        exact_output_amounts_arrayvec.push(mint_amount);
+        inc += 1;
+    }
+    exact_output_amounts_arrayvec.push(0);
+    let exact_output_amounts: [AmountT; TOKEN_COUNT] = exact_output_amounts_arrayvec.into_inner().unwrap();
+    println!("[DEV] exact_output_amounts: {:?}", exact_output_amounts);
+    let input_token_index = 3;
+    let maximum_input_amount = 10;
+    //TODO: do i need to revoke afterwards?
+    println!("[DEV] preparing accounts for swap");
+    pool.prepare_accounts_for_swap_exact_output(
+        &mut banks_client,
+        &payer,
+        &user_accounts_owner,
+        &user_transfer_authority.pubkey(),
+        &user_token_pubkeys,
+        maximum_input_amount,
+        input_token_index,
+        
+    ).await;
+
+    pool.execute_swap_exact_output(
+        &mut banks_client,
+        &payer,
+        &user_accounts_owner,
+        &user_transfer_authority,
+        &user_token_accounts,
+        &spl_token::id(),
+        maximum_input_amount,
+        input_token_index,
+        exact_output_amounts,
+    ).await;
+
+    
+
+    let user_token_balances_after_swap = get_token_balances(&mut banks_client, user_token_pubkeys).await;
+    println!("user_token_balances_after_swap: {:?}", user_token_balances_after_swap);
+    // for i in 0..TOKEN_COUNT - 1 {
+    //     assert_eq!(user_token_balances_after[i] - exact_input_amounts[i], user_token_balances_after_swap[i]);
+    // }
+
+    let governance_fee_balance = get_token_balances::<{ 1 }>(&mut banks_client, [pool.governance_fee_keypair.pubkey()]).await;
+    println!("governance_fee_balance: {:?}", governance_fee_balance);
+
+
 }

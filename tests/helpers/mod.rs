@@ -300,22 +300,12 @@ impl DeployedPool {
         solnode.execute_transaction()
     }
 
-    pub fn balances(&self, solnode: &mut SolanaNode) -> [AmountT; TOKEN_COUNT] {
-        //async closures are unstable...
-        let mut balances = [0 as AmountT; TOKEN_COUNT];
-        for i in 0..TOKEN_COUNT {
-            balances[i] = TokenAccount::get_balance(&self.stable_accounts[i], solnode);
         }
         balances
     }
 
     pub fn governance_lp_balance(&self, solnode: &mut SolanaNode) -> AmountT {
         TokenAccount::get_balance(&self.governance_fee_account, solnode)
-    }
-
-    pub fn state(&self, solnode: &mut SolanaNode) -> PoolState<TOKEN_COUNT> {
-        let pool_account = solnode.get_account_state(&self.pool_keypair.pubkey());
-        PoolState::<TOKEN_COUNT>::deserialize(&mut pool_account.data.as_slice()).unwrap()
     }
 
     pub fn lp_total_supply(&self, solnode: &mut SolanaNode) -> AmountT {

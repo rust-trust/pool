@@ -29,6 +29,19 @@ construct_uint! {
     pub struct U128(2);
 }
 
+impl U128 {
+    pub const fn const_from(value: u128) -> Self {
+        let mut ret = [0; 2];
+        ret[0] = value as u64;
+        ret[1] = (value >> 64) as u64;
+        Self(ret)
+    }
+
+    pub const fn ten_to_the(exp: u8) -> Self {
+        Self::const_from(TEN_TO_THE[exp as usize])
+    }
+}
+
 construct_uint! {
     pub struct U256(4);
 }
@@ -41,7 +54,7 @@ pub enum DecimalError {
     ConversionError,
 }
 
-const fn ten_to_the(exp: u8) -> u128 {
+pub const fn ten_to_the(exp: u8) -> u128 {
     TEN_TO_THE[exp as usize]
 }
 const U128_MAX_DECIMALS: usize = 39;
@@ -124,7 +137,6 @@ const fn create_bit_to_dec_array() -> [u8; BIT_TO_DEC_SIZE] {
     }
 }
 
-//TODO add another macro that allows using built-in u128 for .leading_zeros() of U128 to further reduce compute cost
 macro_rules! unsigned_decimal {
     (
     $name:ident,
@@ -239,7 +251,6 @@ macro_rules! unsigned_decimal {
                 ret
             }
 
-            //TODO banker's rounding?
             pub fn round(&self, decimals: u8) -> Self {
                 let mut ret = self.clone();
                 if decimals < ret.decimals {
@@ -368,7 +379,12 @@ macro_rules! unsigned_decimal {
 
                 let numerator = $upcast!(self.value, $larger_type);
                 let denominator = $upcast!(other.value, $larger_type);
-                let upshift = Self::get_unused_decimals(self.value) + Self::MAX_DECIMALS; //TODO might this be off by 1 in some cases?
+                //upshift might not shift all the way to the top but it's not a problem:
+                //for example: u32 has 9 max decimals while u64 has 19
+                //in this case, upshift can be at most 18 (decimals)
+                //however while we are not using the full range, since we only ultimately
+                //need 9 decimals the "wasted space" is not an issue
+                let upshift = Self::get_unused_decimals(self.value) + Self::MAX_DECIMALS;
                 let upshifted_num = numerator * Self::ten_to_the_larger_type(upshift);
                 let quotient = upshifted_num / denominator;
                 let decimals = self.decimals + upshift - other.decimals;
@@ -401,7 +417,7 @@ macro_rules! unsigned_decimal {
                 if decimals > Self::MAX_DECIMALS {
                     Err(io::Error::new(
                         io::ErrorKind::InvalidData,
-                        "decimals value out of bounds",
+                        format!("decimals value out of bounds: {}", decimals),
                     ))
                 } else {
                     Ok(Self { value, decimals })
@@ -779,7 +795,7 @@ macro_rules! impl_interop {
 
 impl_interop! {DecimalU64, DecimalU128, to_uint128, U128}
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "test-bpf")))]
 mod tests {
     use super::*;
 

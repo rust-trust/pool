@@ -1,95 +1,47 @@
-// see doc/swap_invariants.ipynb for an explanation on the math in here
-
-//TODO it should be possible to get rid of the duplicated code and the ugly encoding of the type in the
-//     function name by properly using generics... but I couldn't figure out how in a reasonable amount
-//     of time (the num_traits crate only got me so far...)
-
-use crate::{decimal::DecimalU64, error::PoolError};
+use crate::{
+    common::create_array,
+    decimal::{self, DecimalU64, U128},
+    error::PoolError,
+};
 
 use std::{
     ops::{Add, Sub},
     vec::Vec,
 };
 
-use arrayvec::ArrayVec;
 use uint::construct_uint;
 construct_uint! {
-    pub struct U256(4);
+    pub struct U192(3);
 }
 
+use rust_decimal::{prelude::*, Decimal};
 type InvariantResult<T> = Result<T, PoolError>;
 
-type AmountT = u64;
-type AmpT = u64;
-type FeeT = u64;
+pub type AmountT = U128;
+type AmpT = Decimal;
+type FeeT = Decimal;
 type DecT = DecimalU64;
 
-const AMP_PRECISION: u8 = 3;
-const FEE_PRECISION: u8 = 6;
-const AMP_MULTIPLIER: u64 = ten_to_the(AMP_PRECISION);
-const FEE_MULTIPLIER: u64 = ten_to_the(FEE_PRECISION);
-
-const fn ten_to_the(precision: u8) -> u64 {
-    10u64.pow(precision as u32)
 }
 
-impl U256 {
-    const SHIFT_MULTIPLIER: Self = Self([0, 1, 0, 0]);
 
-    fn shift_down(&self) -> Self {
-        Self([self.0[1], self.0[2], self.0[3], 0])
-    }
 
-    fn shift_up(&self) -> Self {
-        debug_assert!(self.0[3] == 0, "overflow in U256 while trying to upshift {}", self);
-        Self([0, self.0[0], self.0[1], self.0[2]])
-    }
+    // const ONE_HALF: Decimal = Decimal::from_parts(5, 0, 0, false, 1);
+    // AmountT::from((decimal + ONE_HALF).trunc().to_u128().unwrap())
 
-    fn rounded_div_u64(&self, denominator: u64) -> Self {
+    //due to rounding errors we can get negative values here, hence the unwrap_or
+    decimal.to_u128().unwrap_or(0).into()
+}
+
+
         (self + denominator / 2) / denominator
     }
+}
 
-    fn rounded_div(&self, denominator: Self) -> Self {
-        (self + denominator / 2) / denominator
-    }
 
-    fn rounded_mul_div(amount: AmountT, numerator: Self, denominator: Self) -> u64 {
-        (numerator * amount).rounded_div(denominator).as_u64()
-    }
-
-    fn sub_given_order(keep_order: bool, v1: Self, v2: Self) -> Self {
-        if keep_order {
-            v1 - v2
-        } else {
-            v2 - v1
-        }
     }
 }
 
-fn rounded_mul_div(amount: AmountT, numerator: u64, denominator: u64) -> u64 {
-    (U256::from(amount) * numerator).rounded_div_u64(denominator).as_u64()
-}
-
-fn from_decimal_with_precision(decimal: DecT, precision: u8) -> u64 {
-    let rounded = decimal.round(precision);
-    rounded.get_raw() * ten_to_the(precision - rounded.get_decimals())
-}
-
-fn abs_difference(v1: U256, v2: U256) -> U256 {
-    if v1 > v2 {
-        v1 - v2
-    } else {
-        v2 - v1
-    }
-}
-
-fn sub_given_order(keep_order: bool, v1: AmountT, v2: AmountT) -> AmountT {
-    if keep_order {
-        v1 - v2
-    } else {
-        v2 - v1
-    }
-}
 
 fn exclude_index<const TOKEN_COUNT: usize>(index: usize, array: &[AmountT; TOKEN_COUNT]) -> Vec<AmountT> {
     array
@@ -100,8 +52,8 @@ fn exclude_index<const TOKEN_COUNT: usize>(index: usize, array: &[AmountT; TOKEN
         .collect::<Vec<AmountT>>()
 }
 
-fn sum_balances<const TOKEN_COUNT: usize>(balances: &[AmountT; TOKEN_COUNT]) -> U256 {
-    balances.iter().fold(U256::zero(), |acc, &balance| acc + balance)
+fn sum_balances<const TOKEN_COUNT: usize>(balances: &[AmountT; TOKEN_COUNT]) -> AmountT {
+    balances.iter().fold(AmountT::zero(), |acc, &balance| acc + balance)
 }
 
 fn binary_op_balances<const TOKEN_COUNT: usize>(
@@ -109,25 +61,13 @@ fn binary_op_balances<const TOKEN_COUNT: usize>(
     balances1: &[AmountT; TOKEN_COUNT],
     balances2: &[AmountT; TOKEN_COUNT],
 ) -> [AmountT; TOKEN_COUNT] {
-    balances1
-        .iter()
-        .zip(balances2.iter())
-        .map(|(&v1, &v2)| op(v1, v2))
-        .collect::<ArrayVec<_, TOKEN_COUNT>>()
-        .into_inner()
-        .unwrap()
 }
 
 fn unary_op_balances<const TOKEN_COUNT: usize>(
     op: impl Fn(AmountT) -> AmountT,
     balances: &[AmountT; TOKEN_COUNT],
 ) -> [AmountT; TOKEN_COUNT] {
-    balances
-        .iter()
-        .map(|&v| op(v))
-        .collect::<ArrayVec<_, TOKEN_COUNT>>()
-        .into_inner()
-        .unwrap()
+    create_array(|i| op(balances[i]))
 }
 
 pub struct Invariant<const TOKEN_COUNT: usize>;
@@ -139,13 +79,12 @@ impl<const TOKEN_COUNT: usize> Invariant<TOKEN_COUNT> {
         lp_fee: DecT,
         governance_fee: DecT,
         lp_total_supply: AmountT,
-    ) -> InvariantResult<(AmountT, AmountT)> {
-        let amp_factor = from_decimal_with_precision(amp_factor, AMP_PRECISION);
-        if lp_total_supply == 0 {
-            Ok((Self::internal_calculate_depth(&input_amounts, amp_factor)?.as_u64(), 0))
+        previous_depth: AmountT,
+    ) -> InvariantResult<(AmountT, AmountT, AmountT)> {
+        let amp_factor: Decimal = amp_factor.into();
         } else {
-            let lp_fee = from_decimal_with_precision(lp_fee, FEE_PRECISION);
-            let governance_fee = from_decimal_with_precision(governance_fee, FEE_PRECISION);
+            let lp_fee: FeeT = lp_fee.into();
+            let governance_fee: FeeT = governance_fee.into();
             let total_fee = lp_fee + governance_fee;
             Self::add_remove(
                 true,
@@ -167,10 +106,11 @@ impl<const TOKEN_COUNT: usize> Invariant<TOKEN_COUNT> {
         lp_fee: DecT,
         governance_fee: DecT,
         lp_total_supply: AmountT,
-    ) -> InvariantResult<(AmountT, AmountT)> {
-        let amp_factor = from_decimal_with_precision(amp_factor, AMP_PRECISION);
-        let lp_fee = from_decimal_with_precision(lp_fee, FEE_PRECISION);
-        let governance_fee = from_decimal_with_precision(governance_fee, FEE_PRECISION);
+        previous_depth: AmountT,
+    ) -> InvariantResult<(AmountT, AmountT, AmountT)> {
+        let amp_factor: Decimal = amp_factor.into();
+        let lp_fee: FeeT = lp_fee.into();
+        let governance_fee: FeeT = governance_fee.into();
         let total_fee = lp_fee + governance_fee;
         Self::swap(
             true,
@@ -192,10 +132,11 @@ impl<const TOKEN_COUNT: usize> Invariant<TOKEN_COUNT> {
         lp_fee: DecT,
         governance_fee: DecT,
         lp_total_supply: AmountT,
-    ) -> InvariantResult<(AmountT, AmountT)> {
-        let amp_factor = from_decimal_with_precision(amp_factor, AMP_PRECISION);
-        let lp_fee = from_decimal_with_precision(lp_fee, FEE_PRECISION);
-        let governance_fee = from_decimal_with_precision(governance_fee, FEE_PRECISION);
+        previous_depth: AmountT,
+    ) -> InvariantResult<(AmountT, AmountT, AmountT)> {
+        let amp_factor: Decimal = amp_factor.into();
+        let lp_fee: FeeT = lp_fee.into();
+        let governance_fee: FeeT = governance_fee.into();
         let total_fee = lp_fee + governance_fee;
         Self::swap(
             false,
@@ -217,12 +158,12 @@ impl<const TOKEN_COUNT: usize> Invariant<TOKEN_COUNT> {
         lp_fee: DecT,
         governance_fee: DecT,
         lp_total_supply: AmountT,
-    ) -> InvariantResult<(AmountT, AmountT)> {
-        let amp_factor = from_decimal_with_precision(amp_factor, AMP_PRECISION);
-        let lp_fee = from_decimal_with_precision(lp_fee, FEE_PRECISION);
-        let governance_fee = from_decimal_with_precision(governance_fee, FEE_PRECISION);
+        previous_depth: AmountT,
+    ) -> InvariantResult<(AmountT, AmountT, AmountT)> {
+        let amp_factor: Decimal = amp_factor.into();
+        let lp_fee: FeeT = lp_fee.into();
+        let governance_fee: FeeT = governance_fee.into();
         let total_fee = lp_fee + governance_fee;
-        Self::internal_remove_exact_burn(
             burn_amount,
             output_index,
             &pool_balances,
@@ -240,10 +181,11 @@ impl<const TOKEN_COUNT: usize> Invariant<TOKEN_COUNT> {
         lp_fee: DecT,
         governance_fee: DecT,
         lp_total_supply: AmountT,
-    ) -> InvariantResult<(AmountT, AmountT)> {
-        let amp_factor = from_decimal_with_precision(amp_factor, AMP_PRECISION);
-        let lp_fee = from_decimal_with_precision(lp_fee, FEE_PRECISION);
-        let governance_fee = from_decimal_with_precision(governance_fee, FEE_PRECISION);
+        previous_depth: AmountT,
+    ) -> InvariantResult<(AmountT, AmountT, AmountT)> {
+        let amp_factor: Decimal = amp_factor.into();
+        let lp_fee: FeeT = lp_fee.into();
+        let governance_fee: FeeT = governance_fee.into();
         let total_fee = lp_fee + governance_fee;
         Self::add_remove(
             false,
@@ -253,14 +195,6 @@ impl<const TOKEN_COUNT: usize> Invariant<TOKEN_COUNT> {
             total_fee,
             governance_fee,
             lp_total_supply,
-        )
-    }
-
-    pub fn calculate_depth(pool_balances: &[AmountT; TOKEN_COUNT], amp_factor: DecT) -> AmountT {
-        let amp_factor = from_decimal_with_precision(amp_factor, AMP_PRECISION);
-        Self::internal_calculate_depth(&pool_balances, amp_factor)
-            .unwrap()
-            .as_u64()
     }
 
     fn swap(
@@ -272,51 +206,23 @@ impl<const TOKEN_COUNT: usize> Invariant<TOKEN_COUNT> {
         total_fee: FeeT,
         governance_fee: FeeT,
         lp_total_supply: AmountT,
-    ) -> InvariantResult<(AmountT, AmountT)> {
-        debug_assert!(amounts[index] == 0);
-        let initial_depth = Self::internal_calculate_depth(pool_balances, amp_factor)?;
-        //println!("initial_depth: {}", initial_depth);
         let mut updated_balances = binary_op_balances(
             if is_exact_input { AmountT::add } else { AmountT::sub },
             &pool_balances,
             &amounts,
         );
-        //println!("updated balances: {:?}", updated_balances);
-        let swap_base_balances = &(if is_exact_input && total_fee > 0 {
-            let input_fee_amounts = unary_op_balances(|v| rounded_mul_div(v, total_fee, FEE_MULTIPLIER), amounts);
             binary_op_balances(AmountT::sub, &updated_balances, &input_fee_amounts)
         } else {
             updated_balances
         });
 
-        //println!("swap_base_balances: {:?}", swap_base_balances);
+        // println!("SWAP  swap_base_balances: {:?}", swap_base_balances);
         let known_balances = exclude_index(index, swap_base_balances);
-        //println!("known_balances: {:?}", known_balances);
-        let unknown_balance = Self::calculate_unknown_balance(&known_balances, initial_depth, amp_factor)?;
-        //println!("unknown_balance: {}", unknown_balance);
-        let intermediate_amount = sub_given_order(is_exact_input, pool_balances[index], unknown_balance);
-        let final_amount = if !is_exact_input && total_fee > 0 {
-            rounded_mul_div(intermediate_amount, FEE_MULTIPLIER, FEE_MULTIPLIER - total_fee)
+        let final_amount = if !is_exact_input && !total_fee.is_zero() {
+            fast_round(Decimal::from(intermediate_amount) / (Decimal::one() - total_fee))
         } else {
             intermediate_amount
         };
-
-        updated_balances[index] =
-            if is_exact_input { AmountT::sub } else { AmountT::add }(updated_balances[index], final_amount);
-
-        let governance_mint_amount = if total_fee > 0 {
-            let final_depth = Self::internal_calculate_depth(&updated_balances, amp_factor)?;
-            let total_fee_depth = final_depth - initial_depth;
-            let governance_depth_shifted = (total_fee_depth * governance_fee).shift_up().rounded_div_u64(total_fee);
-
-            (governance_depth_shifted * lp_total_supply)
-                .rounded_div(initial_depth + total_fee_depth - governance_depth_shifted.shift_down())
-                .shift_down()
-                .as_u64()
-        } else {
-            0
-        };
-        Ok((final_amount, governance_mint_amount))
     }
 
     fn add_remove(
@@ -327,40 +233,25 @@ impl<const TOKEN_COUNT: usize> Invariant<TOKEN_COUNT> {
         total_fee: FeeT,
         governance_fee: FeeT,
         lp_total_supply: AmountT,
-    ) -> InvariantResult<(AmountT, AmountT)> {
-        let initial_depth = Self::internal_calculate_depth(pool_balances, amp_factor)?;
         let updated_balances = binary_op_balances(
             if is_add { AmountT::add } else { AmountT::sub },
             &pool_balances,
             &amounts,
         );
-        let updated_depth = Self::internal_calculate_depth(&updated_balances, amp_factor)?;
-        if total_fee > 0 {
-            let sum_updated_balances = sum_balances(&updated_balances);
-            let sum_pool_balances = sum_balances(pool_balances);
-            let scaled_balances = unary_op_balances(
-                |balance| U256::rounded_mul_div(balance, sum_updated_balances, sum_pool_balances),
                 pool_balances,
             );
             let taxbase = binary_op_balances(
                 |updated, scaled| match (is_add, updated > scaled) {
                     (true, true) => updated - scaled,
                     (false, false) => scaled - updated,
-                    _ => 0,
+                    _ => 0.into(),
                 },
                 &updated_balances,
                 &scaled_balances,
             );
 
-            let fee_shifted = if is_add {
-                U256::from(total_fee).shift_up().rounded_div_u64(FEE_MULTIPLIER)
-            } else {
-                U256::from(FEE_MULTIPLIER)
-                    .shift_up()
-                    .rounded_div_u64(FEE_MULTIPLIER - total_fee)
-                    - U256::from(1).shift_up()
             };
-            let fee_amounts = unary_op_balances(|balance| (fee_shifted * balance).shift_down().as_u64(), &taxbase);
+            let fee_amounts = unary_op_balances(|balance| fast_round(fee * Decimal::from(balance)), &taxbase);
             if updated_balances
                 .iter()
                 .zip(fee_amounts.iter())
@@ -385,28 +276,13 @@ impl<const TOKEN_COUNT: usize> Invariant<TOKEN_COUNT> {
                 return Err(PoolError::ImpossibleRemove);
             }
             let fee_adjusted_balances = binary_op_balances(AmountT::sub, &updated_balances, &fee_amounts);
-            let fee_adjusted_depth = Self::internal_calculate_depth(&fee_adjusted_balances, amp_factor)?;
+            //solana_program::msg!("ADD/REMOVE 5");
+            let fee_adjusted_depth = Self::calculate_depth(&fee_adjusted_balances, amp_factor, updated_depth)?;
+            //solana_program::msg!("ADD/REMOVE 6");
             let total_fee_depth = updated_depth - fee_adjusted_depth;
-            let user_depth = U256::sub_given_order(is_add, fee_adjusted_depth, initial_depth);
-            let lp_amount = (user_depth * lp_total_supply).rounded_div(initial_depth).as_u64();
-            let governance_depth_shifted = (total_fee_depth * governance_fee).shift_up().rounded_div_u64(total_fee);
-            let governance_mint_amount = (governance_depth_shifted
-                * if is_add { AmountT::add } else { AmountT::sub }(lp_total_supply, lp_amount))
-            .rounded_div(
-                if is_add { updated_depth } else { fee_adjusted_depth } - governance_depth_shifted.shift_down(),
-            )
-            .shift_down()
-            .as_u64();
-            Ok((lp_amount, governance_mint_amount))
-        } else {
-            let lp_amount = (U256::sub_given_order(is_add, updated_depth, initial_depth) * lp_total_supply)
-                .rounded_div(initial_depth)
-                .as_u64();
-            Ok((lp_amount, 0))
-        }
     }
 
-    fn internal_remove_exact_burn(
+    fn remove_exact_burn_impl(
         burn_amount: AmountT,
         output_index: usize,
         pool_balances: &[AmountT; TOKEN_COUNT],
@@ -414,70 +290,121 @@ impl<const TOKEN_COUNT: usize> Invariant<TOKEN_COUNT> {
         total_fee: FeeT,
         governance_fee: FeeT,
         lp_total_supply: AmountT,
-    ) -> InvariantResult<(AmountT, AmountT)> {
-        debug_assert!(burn_amount > 0);
-        let initial_depth = Self::internal_calculate_depth(&pool_balances, amp_factor)?;
-        let updated_depth = (initial_depth * (lp_total_supply - burn_amount)).rounded_div_u64(lp_total_supply);
+        let updated_depth =
+            initial_depth * (Decimal::from(lp_total_supply - burn_amount) / Decimal::from(lp_total_supply));
         debug_assert!(initial_depth > updated_depth);
         let known_balances = exclude_index(output_index, &pool_balances);
-        let unknown_balance = Self::calculate_unknown_balance(&known_balances, updated_depth, amp_factor)?;
+        let unknown_balance =
+            Self::calculate_unknown_balance(&known_balances, updated_depth, amp_factor, pool_balances[output_index])?;
         let base_amount = pool_balances[output_index] - unknown_balance;
-        if total_fee > 0 {
+        let (output_amount, governance_mint_amount) = if !total_fee.is_zero() {
             let sum_pool_balances = sum_balances(&pool_balances);
-            let taxable_percentage_shifted = (sum_pool_balances - pool_balances[output_index])
-                .shift_up()
-                .rounded_div(sum_pool_balances);
-            let fee_shifted = U256::from(FEE_MULTIPLIER)
-                .shift_up()
-                .rounded_div_u64(FEE_MULTIPLIER - total_fee)
-                - U256::from(1).shift_up();
-            let taxbase = (taxable_percentage_shifted * base_amount)
-                .rounded_div(U256::from(1).shift_up() + (taxable_percentage_shifted * fee_shifted).shift_down());
-            let fee_amount = (fee_shifted * taxbase).shift_down().as_u64();
             let output_amount = base_amount - fee_amount;
             let mut updated_balances = *pool_balances;
             updated_balances[output_index] -= output_amount;
-            let total_fee_depth = Self::internal_calculate_depth(&updated_balances, amp_factor)? - updated_depth;
-            let governance_depth_shifted = (total_fee_depth * governance_fee).shift_up().rounded_div_u64(total_fee);
-            let governance_mint_amount = (governance_depth_shifted * (lp_total_supply - burn_amount))
-                .rounded_div(updated_depth - governance_depth_shifted.shift_down())
-                .shift_down()
-                .as_u64();
-            Ok((output_amount, governance_mint_amount))
         } else {
-            Ok((base_amount, 0))
-        }
+            (base_amount, 0.into())
+        };
+        Ok((output_amount, governance_mint_amount, fast_round(updated_depth)))
     }
 
-    fn internal_calculate_depth(pool_balances: &[AmountT; TOKEN_COUNT], amp_factor: AmpT) -> InvariantResult<U256> {
-        let n = TOKEN_COUNT as AmountT;
-        let pool_balances_times_n = pool_balances
-            .iter()
-            .map(|&pool_balance| U256::from(pool_balance) * n)
-            .collect::<ArrayVec<_, TOKEN_COUNT>>()
-            .into_inner()
-            .unwrap();
-        let pool_balances_sum = pool_balances
-            .iter()
-            .fold(U256::from(0), |acc, &pool_balance| acc + pool_balance);
-        let amp_times_sum = (pool_balances_sum * amp_factor).shift_up(); //less than 192 bits
-        let denominator_fixed = U256::from(amp_factor - 1 * AMP_MULTIPLIER).shift_up(); //less than 128 bits
+    fn calculate_depth(
+        pool_balances: &[AmountT; TOKEN_COUNT],
+        amp_factor: AmpT,
+        initial_guess: Decimal,
+    ) -> InvariantResult<Decimal> {
+        let pool_balances_times_n: [_; TOKEN_COUNT] =
+            create_array(|i| U128::from(pool_balances[i]) * AmountT::from(TOKEN_COUNT));
+        let pool_balances_sum = sum_balances(pool_balances);
 
-        let mut previous_depth = U256::from(0);
-        let mut depth = pool_balances_sum;
-        while abs_difference(depth, previous_depth) > U256::from(1) {
+        // use f64 to calculate either the exact result (if there's sufficient precision) or an updated initial guess
+        let mut depth = {
+            let amp_factor = dec_to_f64(amp_factor);
+            //numeric range considerations for reciprocal_decay_precomp:
+            // https://en.wikipedia.org/wiki/Double-precision_floating-point_format
+            //f64: 1 bit mantissa sign, 52 bit mantissa, 11 bit exponent (offset encoding)
+            // https://en.wikipedia.org/wiki/Double-precision_floating-point_format#Exponent_encoding
+            // => max exponent: 2^1023 ~= 10^308
+            //scaled pool balances are at most 19 decimals (u64) + the decimal shift to
+            // make them uniform in regards to token decimals (see MAX_DECIMAL_DIFFERENCE
+            // in processor.rs - currently 8)
+            //overall, even if the entire U128 range were to be used, this would still only
+            // give 38 decimals per token and hence a product less than 10^240 for a pool
+            // with 6 tokens, which is well within the range of f64 (i.e. < 10^308)
+            let reciprocal_decay_precomp = pool_balances_times_n
+                .iter()
+                .fold(1f64, |acc, &pool_balance| acc * pool_balance.as_u128() as f64)
+                .recip();
+            let pool_balances_sum = pool_balances_sum.as_u128() as f64;
+            let amp_times_sum = pool_balances_sum * amp_factor;
+            let denominator_fixed = amp_factor - 1f64;
+
+            let mut previous_depth = 0f64;
+            let mut depth = if initial_guess.is_zero() {
+                pool_balances_sum
+            } else {
+                dec_to_f64(initial_guess)
+            };
+
+            //sample values for f64 and its underlying representation:
+            // f64       .to_bits() decimal    .to_bits() binary
+            //  1     :  4607182418800017408 = 0_01111111111_0000000000000000000000000000000000000000000000000000
+            //  2     :  4611686018427387904 = 0_10000000000_0000000000000000000000000000000000000000000000000000
+            //  4     :  4616189618054758400 = 0_10000000001_0000000000000000000000000000000000000000000000000000
+            //  5     :  4617315517961601024 = 0_10000000001_0100000000000000000000000000000000000000000000000000
+            // -1     : 13830554455654793216 = 1_01111111111_0000000000000000000000000000000000000000000000000000
+            // -2     : 13835058055282163712 = 1_10000000000_0000000000000000000000000000000000000000000000000000
+            // -4     : 13839561654909534208 = 1_10000000001_0000000000000000000000000000000000000000000000000000
+            // -5     : 13840687554816376832 = 1_10000000001_0100000000000000000000000000000000000000000000000000
+            //  0.5   :  4602678819172646912 = 0_01111111110_0000000000000000000000000000000000000000000000000000
+            //  0.25  :  4598175219545276416 = 0_01111111101_0000000000000000000000000000000000000000000000000000
+            //  0.625 :  4603804719079489536 = 0_01111111110_0100000000000000000000000000000000000000000000000000
+            // -0.5   : 13826050856027422720 = 1_01111111110_0000000000000000000000000000000000000000000000000000
+            // -0.25  : 13821547256400052224 = 1_01111111101_0000000000000000000000000000000000000000000000000000
+            // -0.625 : 13827176755934265344 = 1_01111111110_0100000000000000000000000000000000000000000000000000
+            //                mantissa sign bit | exponent  | mantissa
+
+            //terminates if we've converged to the correct value or exhausted the precision of f64
+            loop {
+                if depth.abs_diff(previous_depth) <= 0.5f64 {
+                    return Ok(Decimal::from(depth as u128));
+                }
+                //AbsDiff::abs_diff(. , .) syntax to get rid of compiler warning
+                if AbsDiff::abs_diff(depth.to_bits(), previous_depth.to_bits()) <= 2 {
+                    break;
+                }
+                previous_depth = depth;
+
+                //similar consideration as above:
+                //depth.powi(TOKEN_COUNT+1) will always be less than 10^308 for 6 tokens
+                let reciprocal_decay = depth.powi(TOKEN_COUNT as i32) * reciprocal_decay_precomp;
+                let n_times_depth_times_decay = depth * reciprocal_decay * TOKEN_COUNT as f64;
+                let numerator = amp_times_sum + n_times_depth_times_decay;
+                let denominator = denominator_fixed + reciprocal_decay * (TOKEN_COUNT + 1) as f64;
+
+                depth = numerator / denominator;
+            }
+
+            Decimal::from(depth as u128)
+        };
+
+        let pool_balances_times_n: [_; TOKEN_COUNT] = create_array(|i| Decimal::from(pool_balances_times_n[i]));
+        let amp_times_sum = Decimal::from(pool_balances_sum) * amp_factor;
+        let denominator_fixed = amp_factor - Decimal::one();
+
+        let mut previous_depth = Decimal::zero();
             previous_depth = depth;
 
             let reciprocal_decay = pool_balances_times_n
                 .iter()
-                .fold(U256::SHIFT_MULTIPLIER * AMP_MULTIPLIER, |acc, &pool_balance_times_n| {
-                    (acc * depth).rounded_div(pool_balance_times_n)
+                .fold(Decimal::one(), |acc, &pool_balance_times_n| {
+                    acc * (depth / pool_balance_times_n)
                 });
-            let n_times_depth_times_decay = depth * reciprocal_decay * n;
+            let n_times_depth_times_decay = depth * reciprocal_decay * Decimal::from(TOKEN_COUNT);
             let numerator = amp_times_sum + n_times_depth_times_decay;
-            let denominator = denominator_fixed + reciprocal_decay * (n + 1);
+            let denominator = denominator_fixed + reciprocal_decay * Decimal::from(TOKEN_COUNT + 1);
 
-            depth = numerator.rounded_div(denominator);
+            depth = numerator / denominator;
         }
 
         Ok(depth)
@@ -487,46 +414,31 @@ impl<const TOKEN_COUNT: usize> Invariant<TOKEN_COUNT> {
         // this should have type &[AmountT; TOKEN_COUNT-1] but Rust currently does not support const operations
         // on const generics and hence TOKEN_COUNT-1 is illegal and so it has to be a Vec instead...
         known_balances: &Vec<AmountT>,
-        depth: U256,
+        depth: Decimal,
         amp_factor: AmpT,
+        initial_guess: AmountT,
     ) -> InvariantResult<AmountT> {
-        let n = TOKEN_COUNT as AmountT;
-        debug_assert!(n == TOKEN_COUNT as AmountT);
+        let n = AmountT::from(TOKEN_COUNT);
         let known_balance_sum = known_balances
             .iter()
-            .fold(U256::from(0), |acc, &known_balance| acc + known_balance);
-        let reciprocal_decay = known_balances
-            .iter()
-            .fold(U256::SHIFT_MULTIPLIER * AMP_MULTIPLIER, |acc, &known_balance| {
-                (acc * depth).rounded_div_u64(known_balance * n)
-            });
-        let numerator_fixed = ((reciprocal_decay * depth).rounded_div_u64(n) * depth)
-            .rounded_div_u64(amp_factor)
-            .shift_down();
-        //can't sub depth from denominator_fixed because overall result could turn negative
-        let denominator_fixed = known_balance_sum + depth * AMP_MULTIPLIER / amp_factor;
-
-        let mut previous_unknown_balance = U256::from(0);
-        let mut unknown_balance = depth;
-        while abs_difference(unknown_balance, previous_unknown_balance) > U256::from(1) {
             previous_unknown_balance = unknown_balance;
             let numerator = numerator_fixed + unknown_balance * unknown_balance;
             let denominator = (denominator_fixed + unknown_balance * 2) - depth;
 
             unknown_balance = numerator.rounded_div(denominator);
+            // println!(".         numerator: {}", numerator);
+            // println!(".       denominator: {}", denominator);
+            // println!(".   unknown_balance: {}", unknown_balance);
         }
 
-        Ok(unknown_balance.as_u64())
+        Ok(AmountT::from(unknown_balance.as_u128()))
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "test-bpf")))]
 mod tests {
     use super::*;
     use crate::decimal::DecimalU128;
-    use std::convert::TryFrom;
-
-    const BASE: AmountT = 10u64.pow(10);
 
     fn assert_close_enough(v1: AmountT, v2: AmountT, max_diff: AmountT) {
         let diff = if v1 > v2 { v1 - v2 } else { v2 - v1 };
@@ -544,21 +456,18 @@ mod tests {
         const TOKEN_COUNT: usize = 6;
         //grouped to signify that exact_depth depends on balances and amp_factor
         let (balances, amp_factor, exact_depth) = (
-            [20, 10, 20, 5, 2, 1],
-            1 * AMP_MULTIPLIER,
+            create_array(|i| AmountT::from([20, 10, 20, 5, 2, 1][i])),
+            DecT::from(1),
             //DecimalU128::new(5797595776747225261683921277u128.into(), 26).unwrap()
             DecimalU128::new(3770007484983239375907243892u128.into(), 26).unwrap(),
         );
 
-        let exponent = 6 + 4;
-        let large_amount = 10u64.pow(exponent);
-        let balances = unary_op_balances(|balance| balance * large_amount, &balances);
+        let exponent = 6 + 4;ount, &balances);
         let shifted_depth =
             DecimalU128::new(exact_depth.get_raw(), exact_depth.get_decimals() - exponent as u8).unwrap();
-        let expected_depth = DecT::try_from(shifted_depth).unwrap();
+        let expected_depth = shifted_depth.trunc();
 
-        let depth = Invariant::<TOKEN_COUNT>::internal_calculate_depth(&balances, amp_factor).unwrap();
-        assert_close_enough(depth.as_u64(), expected_depth.trunc(), 1);
+        let depth = fast_round(
         // println!(">>>        balances: {:?}", balances);
         for i in 0..TOKEN_COUNT {
             let input_balances = exclude_index(i, &balances);
@@ -566,31 +475,25 @@ mod tests {
             // println!(">>> --------------------------");
             let unknown_balance = Invariant::<TOKEN_COUNT>::calculate_unknown_balance(
                 &input_balances,
-                U256::from(expected_depth.trunc()),
-                amp_factor,
             )
             .unwrap();
             // println!(">>> unknown_balance: {}", unknown_balance);
-            assert_close_enough(unknown_balance, balances[i], 1);
+            assert_close_enough(unknown_balance, balances[i], 1.into());
         }
     }
 
     #[test]
     fn swap_in_vs_out() {
-        // println!(">>>\n");
-        const TOKEN_COUNT: usize = 3;
-        let lp_total_supply = BASE * TOKEN_COUNT as AmountT;
         let amp_factor = DecT::new(1313, 3).unwrap();
         let lp_fee = DecT::new(10, 2).unwrap();
         // let lp_fee = DecT::from(0);
         let governance_fee = DecT::new(40, 2).unwrap();
 
         let balances = [BASE; TOKEN_COUNT];
-        let mut amounts = [0; TOKEN_COUNT];
         let original_input = balances[0] / 2;
         amounts[0] = original_input;
 
-        let (yielded_output, government_mint_in) = Invariant::<TOKEN_COUNT>::swap_exact_input(
+        let (yielded_output, government_mint_in, _) = Invariant::<TOKEN_COUNT>::swap_exact_input(
             &amounts,
             1,
             &balances,
@@ -598,13 +501,10 @@ mod tests {
             lp_fee,
             governance_fee,
             lp_total_supply,
-        )
-        .unwrap();
-        // println!(">>> swap_exact_input:\n>>> input: {}\n>>> output: {}\n>>> govfee: {}", original_input, yielded_output, government_mint_in);
 
         amounts[0] = yielded_output;
 
-        let (required_input, government_mint_out) = Invariant::<TOKEN_COUNT>::swap_exact_output(
+        let (required_input, government_mint_out, _) = Invariant::<TOKEN_COUNT>::swap_exact_output(
             1,
             &amounts,
             &balances,
@@ -612,29 +512,22 @@ mod tests {
             lp_fee,
             governance_fee,
             lp_total_supply,
-        )
-        .unwrap();
-        // println!(">>> swap_exact_input:\n>>> output: {}\n>>>  input: {}\n>>> govfee: {}", yielded_output, required_input, government_mint_out);
 
-        assert_close_enough(required_input, original_input, 1);
-        assert_close_enough(government_mint_in, government_mint_out, 1);
+        assert_close_enough(required_input, original_input, 1.into());
+        assert_close_enough(government_mint_in, government_mint_out, 1.into());
     }
 
     #[test]
     fn remove_consistency() {
-        // println!(">>>\n");
-        const TOKEN_COUNT: usize = 3;
-        let lp_total_supply = BASE * TOKEN_COUNT as AmountT;
         let amp_factor = DecT::from(1);
         let lp_fee = DecT::new(10, 2).unwrap();
         // let lp_fee = DecT::from(0);
         let governance_fee = DecT::new(40, 2).unwrap();
 
         let balances = [BASE; TOKEN_COUNT];
-        let mut output = [0; TOKEN_COUNT];
         output[0] = balances[0] / 2;
 
-        let (lp_required, gov_fee_token_remove) = Invariant::<TOKEN_COUNT>::remove_exact_output(
+        let (lp_required, gov_fee_token_remove, _) = Invariant::<TOKEN_COUNT>::remove_exact_output(
             &output,
             &balances,
             amp_factor,
@@ -644,7 +537,7 @@ mod tests {
         )
         .unwrap();
 
-        let (amount_received, gov_fee_lp_burn) = Invariant::<TOKEN_COUNT>::remove_exact_burn(
+        let (amount_received, gov_fee_lp_burn, _) = Invariant::<TOKEN_COUNT>::remove_exact_burn(
             lp_required,
             0,
             &balances,
@@ -652,13 +545,6 @@ mod tests {
             lp_fee,
             governance_fee,
             lp_total_supply,
-        )
-        .unwrap();
-        // println!(">>> removing {} coins (of one type) requires {} lp tokens", output[0], lp_required);
-        // println!(">>> burning {} lp tokens netted {} coins (of one type)", lp_required, amount_received);
-
-        assert_close_enough(output[0], amount_received, 1);
-        assert_close_enough(gov_fee_token_remove, gov_fee_lp_burn, 1);
     }
 
     #[test]
@@ -672,9 +558,6 @@ mod tests {
     }
 
     fn uniform_and_imbalanced_vs_together(is_add: bool) {
-        // println!(">>>\n");
-        const TOKEN_COUNT: usize = 3;
-        let lp_total_supply = BASE * TOKEN_COUNT as AmountT;
         let amp_factor = DecT::new(1313, 3).unwrap();
         let lp_fee = DecT::new(10, 2).unwrap();
         let governance_fee = DecT::new(20, 2).unwrap();
@@ -689,22 +572,16 @@ mod tests {
             Invariant::<TOKEN_COUNT>::remove_exact_output
         };
 
-        let (split_first_lp, nothing) = pool_op(
+        let (split_first_lp, nothing, _) = pool_op(
             &balanced_amounts,
             &balances,
             amp_factor,
             lp_fee,
             governance_fee,
             lp_total_supply,
-        )
-        .unwrap();
-        assert_eq!(nothing, 0);
-        // println!(">>>          split_first_lp: {}", split_first_lp);
-
-        let mut imbalanced_amounts = [0; TOKEN_COUNT];
         imbalanced_amounts[0] = balances[0] / balanced_divisor / 2;
 
-        let (split_second_lp, split_governance_fee) = pool_op(
+        let (split_second_lp, split_governance_fee, _) = pool_op(
             &imbalanced_amounts,
             &binary_op_balances(
                 if is_add { AmountT::add } else { AmountT::sub },
@@ -720,7 +597,7 @@ mod tests {
         // println!(">>>         split_second_lp: {}", split_second_lp);
         // println!(">>>    split_governance_fee: {}", split_governance_fee);
 
-        let (together_lp, together_governance_fee) = pool_op(
+        let (together_lp, together_governance_fee, _) = pool_op(
             &binary_op_balances(AmountT::add, &balanced_amounts, &imbalanced_amounts),
             &balances,
             amp_factor,
@@ -731,8 +608,5 @@ mod tests {
         .unwrap();
         // println!(">>>             together_lp: {}", together_lp);
         // println!(">>> together_governance_fee: {}", together_governance_fee);
-
-        assert_close_enough(together_lp, split_first_lp + split_second_lp, 1);
-        assert_close_enough(together_governance_fee, split_governance_fee, 1);
     }
 }

@@ -1,0 +1,32 @@
+[package]
+name = "pool-fuzz"
+version = "0.1.0"
+description = "Pool Protocol Fuzzer"
+authors = ["rowdyear <rowdyear@maelstrom.finance>"]
+edition = "2018"
+publish = false
+
+[dependencies]
+honggfuzz = { version = "0.5.54" }
+
+
+#pool related dependencies
+pool = {path = "..", features = ["fuzz", "no-entrypoint"]}
+#solana related dependenciesrgo/borsh-0.10.2
+spl-associated-token-account = { version = "1.0.2", features = ["no-entrypoint"] }
+
+
+#serializiation/deserialzation
+
+
+#error handling
+thiserror = "1.0"
+num-traits = "0.2"
+num-derive = "0.3"
+
+#misc
+[[bin]]
+name = "pool_fuzz"
+path = "src/instructions.rs"
+test = false
+doc = false

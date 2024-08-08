@@ -1,26 +1,39 @@
 [package]
 name = "pool"
-version = "0.1.0"
-authors = ["z0ji <zoji@maelstrom.finance>"]
+version = "1.0.0"
+authors = ["swimivan <ivan@swim.io>"]
 edition = "2018"
+homepage = "https://swim.io"
+keywords = ["solana", "swim", "program", "pool"]
+license = "BUSL-1.1"
+
+[workspace]
+members = [
+    "fuzz"
+]
+
+[workspace]
+members = [
+    "fuzz"
+]
 
 [features]
 no-entrypoint = []
 test-bpf = []
+fuzz = ["arbitrary", "roots"]
+
 
 [dependencies]
 #solana related dependencies
-solana-program = "1.7.10"
+solana-program = "1.8.14"
 spl-token = { version = "3.1.1", features = ["no-entrypoint"] }
 
 #serializiation/deserialzation
-borsh = { version = "0.9.1", features = ["const-generics"] }
+borsh = { version = "0.10.2", features = ["const-generics"] }
 borsh-derive = "0.9.1"
 
 #numerics
-uint = { version = "0.9.1", default-features = false }
-rust_decimal = {version = "1.15", features = [ "maths" ] }
-rust_decimal_macros = "1.15"
+# This must be pinned to 0.9.1 until Solana's Rust fork supports Rust >=1.56.1
 
 #error handling
 thiserror = "1.0"
@@ -28,11 +41,17 @@ num-traits = "0.2"
 num-derive = "0.3"
 
 #misc
-arrayvec = "0.7.1"
+arrayvec = "0.7.2"
+
+
+arbitrary = { version = "1.1.0", features = ["derive"], optional = true}
+honggfuzz = {version = "0.5.54", optional = true }
+roots = { version = "0.0.7", optional = true }
 
 [dev-dependencies]
-solana-program-test = "1.7.4"
-solana-sdk = "1.7.4"
-
+solana-program-test = "=1.8.14"
+solana-sdk = "=1.8.14"
+solana-validator = "=1.8.14"
+solana-client = "=1.8.14"
 [lib]
 crate-type = ["cdylib", "lib"]

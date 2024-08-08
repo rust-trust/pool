@@ -21,12 +21,10 @@ spl-associated-token-account = { version = "1.0.2", features = ["no-entrypoint"]
 
 
 #serializiation/deserialzation
-borsh = { version = "0.9.1", features = ["const-generics"] }
+borsh = { version = "0.10.2", features = ["const-generics"] }
 borsh-derive = "0.9.1"
 
 #numerics
-uint = { version = "=0.9.5", default-features = false }
-rust_decimal = {version = "1.22", features = [ "maths" ] }
 rust_decimal_macros = "1.22"
 
 #error handling

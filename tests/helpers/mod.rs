@@ -105,10 +105,6 @@ impl SolanaNode {
         keypair
     }
 
-    fn create_mint(&mut self, decimals: u8, owner: &Pubkey) -> Pubkey {
-        let keypair = self.create_account(MintState::LEN, Some(&spl_token::id()));
-        self.instructions.push(
-            spl_token::instruction::initialize_mint(&spl_token::id(), &keypair.pubkey(), owner, None, decimals)
                 .unwrap(),
         );
         self.execute_transaction().expect("transaction failed unexpectedly");
@@ -130,69 +126,6 @@ impl SolanaNode {
             // println!("ixs.is_empty()");
             return Ok(());
         }
-        // println!("!ixs.is_empty: {:?}", self.instructions);
-
-        self.signers.push(copy_keypair(&self.payer));
-
-        //solana program v1.9.0
-        // let recent_blockhash = self.banks_client.get_latest_blockhash().unwrap();
-        let recent_blockhash = self
-            .rpc_client
-            .get_recent_blockhash()
-            .expect("failed to get recent blockhash")
-            .0;
-
-        let transaction = Transaction::new_signed_with_payer(
-            &self.instructions,
-            Some(&self.payer.pubkey()),
-            &self.signers.iter().map(|signer| signer).collect::<Vec<_>>(),
-            recent_blockhash,
-        );
-        let result = self.rpc_client.send_and_confirm_transaction(&transaction);
-
-        self.instructions.clear();
-        self.signers.clear();
-
-        if let Err(client_error) = result {
-            // println!("execute_txn detected an error");
-            let ClientError { request, kind } = client_error;
-            match kind.get_transaction_error() {
-                Some(TransactionError::InstructionError(_ix_index, ix_error)) => {
-                    return Err(ix_error);
-                }
-                Some(tx_err) => {
-                    panic!("unexpected transactionError: {:?} for request: {:?}", tx_err, request);
-                }
-                None => {
-                    panic!("unexpected non-transaction error  for request: {:?}", request);
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-//all MintAccounts are owned by the default_owner
-#[derive(Debug)]
-pub struct MintAccount(Pubkey);
-
-impl MintAccount {
-    pub fn new(decimals: u8, solnode: &mut SolanaNode) -> Self {
-        Self(solnode.create_mint(decimals, &solnode.default_owner().pubkey()))
-    }
-
-    pub fn pubkey(&self) -> &Pubkey {
-        &self.0
-    }
-
-    pub fn state(&self, solnode: &mut SolanaNode) -> MintState {
-        Self::get_state(&self.0, solnode)
-    }
-
-    pub fn mint_to(&self, recipient: &TokenAccount, amount: AmountT, solnode: &mut SolanaNode) {
-        if amount > 0 {
-            solnode.push_instruction(
-                spl_token::instruction::mint_to(
                     &spl_token::id(),
                     &self.0,
                     &recipient.pubkey(),
@@ -231,15 +164,6 @@ impl TokenAccount {
         Self::get_balance(&self.0, solnode)
     }
 
-    pub fn approve(&self, amount: AmountT, solnode: &mut SolanaNode) {
-        solnode.push_instruction(
-            spl_token::instruction::approve(
-                &spl_token::id(),
-                &self.0,
-                &solnode.default_delegate().pubkey(),
-                &solnode.default_owner().pubkey(),
-                &[&solnode.default_owner().pubkey()],
-                amount,
             )
             .unwrap(),
         );
